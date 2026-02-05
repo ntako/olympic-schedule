@@ -2,12 +2,18 @@ import Gio from 'gi://Gio';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
+import Soup from 'gi://Soup';
+import Pango from 'gi://Pango';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 export default class OlympicRingsExtension extends Extension {
   enable() {
+    this._settings = this.getSettings();
+    this._keyPressId = 0;
+    this._prevKeyFocus = null;
+
     this._button = new St.Button({
       style_class: 'panel-button olympic-rings-button',
       reactive: true,
@@ -67,6 +73,8 @@ export default class OlympicRingsExtension extends Extension {
   disable() {
     this._hidePopup();
 
+    this._settings = null;
+
     if (this._buttonPressId) {
       this._button.disconnect(this._buttonPressId);
       this._buttonPressId = null;
@@ -110,11 +118,35 @@ export default class OlympicRingsExtension extends Extension {
     }
 
     this._popup = new St.BoxLayout({
-      style: 'background-color: rgba(0, 0, 0, 0.8); color: #fff; padding: 6px 10px; border-radius: 6px;',
+      style: 'background-color: #ffffff; color: #0f172a; padding: 10px 12px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.22);',
       reactive: true,
+      vertical: true,
     });
-    const label = new St.Label({ text: 'Olympic Schedule' });
-    this._popup.add_child(label);
+    const header = new St.Label({ text: 'Olympic Schedule' });
+    header.set_style('font-weight: 800; margin-bottom: 8px; font-size: 14px;');
+
+    this._popupContent = new St.BoxLayout({
+      vertical: true,
+      style: 'max-width: 520px; padding-right: 10px;',
+    });
+
+    this._popupLoadingLabel = new St.Label({
+      text: 'Caricamento...',
+      x_align: Clutter.ActorAlign.START,
+    });
+    if (this._popupLoadingLabel.clutter_text) {
+      this._popupLoadingLabel.clutter_text.line_wrap = true;
+      this._popupLoadingLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+    }
+    this._popupContent.add_child(this._popupLoadingLabel);
+
+    this._popupScroll = new St.ScrollView({
+      style: 'max-height: 520px;',
+      overlay_scrollbars: false,
+    });
+    this._popupScroll.set_child(this._popupContent);
+    this._popup.add_child(header);
+    this._popup.add_child(this._popupScroll);
     Main.uiGroup.add_child(this._popup);
 
     const [bx, by] = this._button.get_transformed_position();
@@ -124,10 +156,11 @@ export default class OlympicRingsExtension extends Extension {
     const y = Math.round(by + bh + 6);
     this._popup.set_position(x, y);
 
-    this._popupTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {
-      this._hidePopup();
-      return GLib.SOURCE_REMOVE;
-    });
+    this._loadSchedule();
+
+    this._ensureEscHandler();
+    this._prevKeyFocus = global.stage.get_key_focus();
+    global.stage.set_key_focus(this._popup);
   }
 
   _hidePopup() {
@@ -138,6 +171,188 @@ export default class OlympicRingsExtension extends Extension {
     if (this._popup) {
       this._popup.destroy();
       this._popup = null;
+    }
+    this._popupScroll = null;
+    this._popupContent = null;
+    this._popupLoadingLabel = null;
+    this._disconnectEscHandler();
+    if (this._prevKeyFocus) {
+      global.stage.set_key_focus(this._prevKeyFocus);
+      this._prevKeyFocus = null;
+    }
+  }
+
+  async _loadSchedule() {
+    try {
+      const noc = (this._settings.get_string('noc') || 'ITA').trim().toUpperCase();
+      const day = this._getTodayIsoDate();
+      const url = `https://www.olympics.com/wmr-owg2026/schedules/api/${noc}/schedule/lite/day/${day}`;
+
+      const jsonText = await this._fetchJson(url);
+      const data = JSON.parse(jsonText);
+      if (this._popupContent) {
+        this._renderSchedule(data, day, noc);
+      }
+    } catch (err) {
+      if (this._popupLoadingLabel) {
+        this._popupLoadingLabel.text = `Errore: ${err.message ?? err}`;
+      }
+    }
+  }
+
+  _getTodayIsoDate() {
+    const now = GLib.DateTime.new_now_local();
+    return now.format('%Y-%m-%d');
+  }
+
+  _truncateJson(text, maxLen) {
+    try {
+      const parsed = JSON.parse(text);
+      const pretty = JSON.stringify(parsed, null, 2);
+      if (pretty.length <= maxLen) {
+        return pretty;
+      }
+      return `${pretty.slice(0, maxLen)}\n...`;
+    } catch {
+      if (text.length <= maxLen) {
+        return text;
+      }
+      return `${text.slice(0, maxLen)}\n...`;
+    }
+  }
+
+  _renderSchedule(data, day, noc) {
+    this._popupContent.destroy_all_children();
+
+    const units = Array.isArray(data?.units) ? data.units : [];
+    const dayUnits = units.filter(u => (u.olympicDay || '').startsWith(day));
+    dayUnits.sort((a, b) => (a.startDate || '').localeCompare(b.startDate || ''));
+
+    if (dayUnits.length === 0) {
+      const empty = new St.Label({ text: 'Nessun evento disponibile.' });
+      this._popupContent.add_child(empty);
+      return;
+    }
+
+    const dayHeader = new St.Label({ text: this._formatDayTitle(day) });
+    dayHeader.set_style('font-weight: 700; font-size: 13px; color: #334155; margin: 6px 0;');
+    this._popupContent.add_child(dayHeader);
+
+    for (const unit of dayUnits) {
+      this._popupContent.add_child(this._buildCard(unit, noc));
+    }
+  }
+
+  _buildCard(unit, noc) {
+    const status = (unit.status || '').toUpperCase();
+    const isLive = unit.liveFlag || status === 'IN_PROGRESS' || status === 'LIVE' || status === 'ACTIVE';
+    const isPast = status === 'FINISHED' || status === 'CANCELLED' || status === 'COMPLETED';
+    const bg = isLive ? '#fff5cc' : (isPast ? '#e2e8f0' : '#f1f5f9');
+
+    const card = new St.BoxLayout({
+      vertical: true,
+      style: `background: ${bg}; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;`,
+    });
+
+    const topRow = new St.BoxLayout({ x_expand: true });
+    const timeText = this._formatStartTime(unit);
+    const timeLabel = new St.Label({ text: timeText });
+    timeLabel.set_style('font-weight: 700; margin-right: 10px;');
+
+    const titleBox = new St.BoxLayout({ vertical: true, x_expand: true });
+    const discipline = new St.Label({ text: unit.disciplineName || 'Evento' });
+    discipline.set_style('font-weight: 700;');
+    const subtitle = new St.Label({ text: unit.eventUnitName || unit.eventName || '' });
+    subtitle.set_style('color: #475569; font-size: 12px;');
+
+    titleBox.add_child(discipline);
+    if (subtitle.text) titleBox.add_child(subtitle);
+
+    topRow.add_child(timeLabel);
+    topRow.add_child(titleBox);
+    card.add_child(topRow);
+
+    const competitors = Array.isArray(unit.competitors) ? unit.competitors : [];
+    if (competitors.length > 0) {
+      const compBox = new St.BoxLayout({ vertical: true, style: 'margin-top: 6px;' });
+      const max = Math.min(2, competitors.length);
+      for (let i = 0; i < max; i++) {
+        const c = competitors[i];
+        const mark = c.results?.mark ? `  ${c.results.mark}` : '';
+        const line = new St.Label({
+          text: `${c.noc || ''}  ${c.name || ''}${mark}`,
+        });
+        line.set_style(`font-size: 12px; ${c.noc === noc ? 'font-weight: 700;' : ''}`);
+        compBox.add_child(line);
+      }
+      card.add_child(compBox);
+    }
+
+    return card;
+  }
+
+  _formatStartTime(unit) {
+    if (unit.hideStartDate && unit.startText) {
+      return unit.startText;
+    }
+    if (!unit.startDate) {
+      return '';
+    }
+    const dt = GLib.DateTime.new_from_iso8601(unit.startDate, null);
+    if (!dt) return '';
+    return dt.format('%H:%M');
+  }
+
+  _formatDayTitle(isoDate) {
+    const dt = GLib.DateTime.new_from_iso8601(`${isoDate}T00:00:00`, null);
+    if (!dt) return isoDate;
+    const title = dt.format('%e %b, %A');
+    return title.charAt(0).toUpperCase() + title.slice(1);
+  }
+
+  _fetchJson(url) {
+    const session = new Soup.Session();
+    const message = Soup.Message.new('GET', url);
+    message.request_headers.append(
+      'User-Agent',
+      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36'
+    );
+    message.request_headers.append('Accept', 'application/json');
+
+    return new Promise((resolve, reject) => {
+      session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (sess, res) => {
+        try {
+          const bytes = sess.send_and_read_finish(res);
+          const data = bytes.get_data();
+          const text = new TextDecoder('utf-8').decode(data);
+          if (message.get_status() !== Soup.Status.OK) {
+            reject(new Error(`HTTP ${message.get_status()}`));
+            return;
+          }
+          resolve(text);
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+  }
+
+  _ensureEscHandler() {
+    if (this._keyPressId) return;
+    this._keyPressId = global.stage.connect('key-press-event', (actor, event) => {
+      if (!this._popup) return Clutter.EVENT_PROPAGATE;
+      if (event.get_key_symbol() === Clutter.KEY_Escape) {
+        this._hidePopup();
+        return Clutter.EVENT_STOP;
+      }
+      return Clutter.EVENT_PROPAGATE;
+    });
+  }
+
+  _disconnectEscHandler() {
+    if (this._keyPressId) {
+      global.stage.disconnect(this._keyPressId);
+      this._keyPressId = 0;
     }
   }
 }
