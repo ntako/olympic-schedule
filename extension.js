@@ -122,8 +122,13 @@ export default class OlympicRingsExtension extends Extension {
       reactive: true,
       vertical: true,
     });
+    const headerBox = new St.BoxLayout({ vertical: true });
+    headerBox.set_style('padding-bottom: 6px; margin-bottom: 10px;');
     const header = new St.Label({ text: 'Olympic Schedule' });
-    header.set_style('font-weight: 800; margin-bottom: 8px; font-size: 14px;');
+    header.set_style('font-weight: 900; font-size: 16px;');
+    const headerSeparator = new St.Widget({ style: 'background-color: #cbd5e1; height: 2px; margin-top: 6px;' });
+    headerBox.add_child(header);
+    headerBox.add_child(headerSeparator);
 
     this._popupContent = new St.BoxLayout({
       vertical: true,
@@ -145,7 +150,7 @@ export default class OlympicRingsExtension extends Extension {
       overlay_scrollbars: false,
     });
     this._popupScroll.set_child(this._popupContent);
-    this._popup.add_child(header);
+    this._popup.add_child(headerBox);
     this._popup.add_child(this._popupScroll);
     Main.uiGroup.add_child(this._popup);
 
@@ -282,7 +287,7 @@ export default class OlympicRingsExtension extends Extension {
         const line = new St.Label({
           text: `${c.noc || ''}  ${c.name || ''}${mark}`,
         });
-        line.set_style(`font-size: 12px; ${c.noc === noc ? 'font-weight: 700;' : ''}`);
+        line.set_style(`font-size: 12px; ${c.noc === noc ? 'font-weight: 700; color: #15803d;' : ''}`);
         compBox.add_child(line);
       }
       card.add_child(compBox);
