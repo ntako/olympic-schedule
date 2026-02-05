@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.olympic-schedule" path="/org/gnome/shell/extensions/olympic-schedule/">
+    <key name="noc" type="s">
+      <default>'ITA'</default>
+      <summary>NOC</summary>
+      <description>Codice NOC della nazione (es. ITA).</description>
+    </key>
+  </schema>
+</schemalist>
