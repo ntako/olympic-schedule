@@ -124,16 +124,49 @@ export default class OlympicRingsExtension extends Extension {
     });
     const headerBox = new St.BoxLayout({ vertical: true });
     headerBox.set_style('padding-bottom: 6px; margin-bottom: 10px;');
+    const headerRow = new St.BoxLayout({ x_expand: true });
     const header = new St.Label({ text: 'Olympic Schedule' });
     header.set_style('font-weight: 900; font-size: 16px;');
+    headerRow.add_child(header);
     const headerSeparator = new St.Widget({ style: 'background-color: #cbd5e1; height: 2px; margin-top: 6px;' });
-    headerBox.add_child(header);
+    headerBox.add_child(headerRow);
     headerBox.add_child(headerSeparator);
 
     this._popupContent = new St.BoxLayout({
       vertical: true,
       style: 'max-width: 520px; padding-right: 10px;',
     });
+
+    const dayRow = new St.BoxLayout({ x_expand: true });
+    dayRow.set_style('background: #e6f4ff; border-radius: 8px; padding: 4px 6px; margin: 6px 0;');
+    const prevButton = new St.Button({ reactive: true, can_focus: true, track_hover: true });
+    prevButton.set_style('padding: 2px 6px; border-radius: 6px; background: #f1f5f9;');
+    const prevIcon = new St.Icon({ icon_name: 'go-previous-symbolic', style_class: 'system-status-icon', icon_size: 16 });
+    prevButton.set_child(prevIcon);
+    prevButton.connect('button-press-event', () => {
+      this._advanceDay(-1);
+      return Clutter.EVENT_STOP;
+    });
+
+    this._dayLabel = new St.Label({
+      text: this._formatDayTitle(this._currentDay || this._getTodayIsoDate()),
+      x_align: Clutter.ActorAlign.CENTER,
+      x_expand: true,
+    });
+    this._dayLabel.set_style('font-weight: 700; font-size: 13px; color: #334155;');
+
+    const nextButton = new St.Button({ reactive: true, can_focus: true, track_hover: true });
+    nextButton.set_style('padding: 2px 6px; border-radius: 6px; background: #f1f5f9;');
+    const nextIcon = new St.Icon({ icon_name: 'go-next-symbolic', style_class: 'system-status-icon', icon_size: 16 });
+    nextButton.set_child(nextIcon);
+    nextButton.connect('button-press-event', () => {
+      this._advanceDay(1);
+      return Clutter.EVENT_STOP;
+    });
+
+    dayRow.add_child(prevButton);
+    dayRow.add_child(this._dayLabel);
+    dayRow.add_child(nextButton);
 
     this._popupLoadingLabel = new St.Label({
       text: 'Caricamento...',
@@ -151,6 +184,7 @@ export default class OlympicRingsExtension extends Extension {
     });
     this._popupScroll.set_child(this._popupContent);
     this._popup.add_child(headerBox);
+    this._popup.add_child(dayRow);
     this._popup.add_child(this._popupScroll);
     Main.uiGroup.add_child(this._popup);
 
@@ -161,6 +195,7 @@ export default class OlympicRingsExtension extends Extension {
     const y = Math.round(by + bh + 6);
     this._popup.set_position(x, y);
 
+    this._currentDay = this._getTodayIsoDate();
     this._loadSchedule();
 
     this._ensureEscHandler();
@@ -180,6 +215,7 @@ export default class OlympicRingsExtension extends Extension {
     this._popupScroll = null;
     this._popupContent = null;
     this._popupLoadingLabel = null;
+    this._dayLabel = null;
     this._disconnectEscHandler();
     if (this._prevKeyFocus) {
       global.stage.set_key_focus(this._prevKeyFocus);
@@ -190,8 +226,9 @@ export default class OlympicRingsExtension extends Extension {
   async _loadSchedule() {
     try {
       const noc = (this._settings.get_string('noc') || 'ITA').trim().toUpperCase();
-      const day = this._getTodayIsoDate();
+      const day = this._currentDay || this._getTodayIsoDate();
       const url = `https://www.olympics.com/wmr-owg2026/schedules/api/${noc}/schedule/lite/day/${day}`;
+      log(`[olympic-schedule] refresh ${url}`);
 
       const jsonText = await this._fetchJson(url);
       const data = JSON.parse(jsonText);
@@ -228,6 +265,9 @@ export default class OlympicRingsExtension extends Extension {
 
   _renderSchedule(data, day, noc) {
     this._popupContent.destroy_all_children();
+    if (this._dayLabel) {
+      this._dayLabel.text = this._formatDayTitle(day);
+    }
 
     const units = Array.isArray(data?.units) ? data.units : [];
     const dayUnits = units.filter(u => (u.olympicDay || '').startsWith(day));
@@ -238,10 +278,6 @@ export default class OlympicRingsExtension extends Extension {
       this._popupContent.add_child(empty);
       return;
     }
-
-    const dayHeader = new St.Label({ text: this._formatDayTitle(day) });
-    dayHeader.set_style('font-weight: 700; font-size: 13px; color: #334155; margin: 6px 0;');
-    this._popupContent.add_child(dayHeader);
 
     for (const unit of dayUnits) {
       this._popupContent.add_child(this._buildCard(unit, noc));
@@ -315,6 +351,25 @@ export default class OlympicRingsExtension extends Extension {
     return title.charAt(0).toUpperCase() + title.slice(1);
   }
 
+  _advanceDay(deltaDays) {
+    const base = this._currentDay || this._getTodayIsoDate();
+    const dt = GLib.DateTime.new_from_iso8601(`${base}T00:00:00Z`, null);
+    if (!dt) return;
+    const next = dt.add_days(deltaDays).format('%Y-%m-%d');
+    this._currentDay = next;
+    if (this._dayLabel) {
+      this._dayLabel.text = this._formatDayTitle(next);
+    }
+    if (this._popupContent) {
+      this._popupContent.destroy_all_children();
+      this._popupContent.add_child(new St.Label({ text: 'Caricamento...' }));
+    }
+    GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+      this._loadSchedule();
+      return GLib.SOURCE_REMOVE;
+    });
+  }
+
   _fetchJson(url) {
     const session = new Soup.Session();
     const message = Soup.Message.new('GET', url);
@@ -360,4 +415,5 @@ export default class OlympicRingsExtension extends Extension {
       this._keyPressId = 0;
     }
   }
+
 }
