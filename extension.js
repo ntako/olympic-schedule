@@ -188,12 +188,7 @@ export default class OlympicRingsExtension extends Extension {
     this._popup.add_child(this._popupScroll);
     Main.uiGroup.add_child(this._popup);
 
-    const [bx, by] = this._button.get_transformed_position();
-    const [bw, bh] = this._button.get_transformed_size();
-    const [minWidth] = this._popup.get_preferred_width(-1);
-    const x = Math.round(bx + (bw - minWidth) / 2);
-    const y = Math.round(by + bh + 6);
-    this._popup.set_position(x, y);
+    this._positionPopup();
 
     this._currentDay = this._getTodayIsoDate();
     this._loadSchedule();
@@ -223,6 +218,27 @@ export default class OlympicRingsExtension extends Extension {
     }
   }
 
+  _positionPopup() {
+    if (!this._popup || !this._button) return;
+    const [bx, by] = this._button.get_transformed_position();
+    const [bw, bh] = this._button.get_transformed_size();
+    const [, , natW, natH] = this._popup.get_preferred_size();
+    const popupW = natW;
+    const popupH = natH;
+
+    const monitor = Main.layoutManager.primaryMonitor;
+    const margin = 8;
+    let x = Math.round(bx + (bw - popupW) / 2);
+    let y = Math.round(by + bh + 6);
+
+    x = Math.max(monitor.x + margin, Math.min(x, monitor.x + monitor.width - popupW - margin));
+    if (y + popupH > monitor.y + monitor.height - margin) {
+      y = Math.max(monitor.y + margin, Math.round(by - popupH - 6));
+    }
+
+    this._popup.set_position(x, y);
+  }
+
   async _loadSchedule() {
     try {
       const noc = (this._settings.get_string('noc') || 'ITA').trim().toUpperCase();
@@ -234,6 +250,10 @@ export default class OlympicRingsExtension extends Extension {
       const data = JSON.parse(jsonText);
       if (this._popupContent) {
         this._renderSchedule(data, day, noc);
+        GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+          this._positionPopup();
+          return GLib.SOURCE_REMOVE;
+        });
       }
     } catch (err) {
       if (this._popupLoadingLabel) {
