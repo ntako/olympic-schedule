@@ -26,6 +26,8 @@ Estensione per GNOME Shell che aggiunge un’icona in topbar e mostra, al click 
 
 ## Note
 - L’estensione recupera i dati dal feed ufficiale `olympics.com` usando il NOC configurato.
+- Repository: `github.com/sydro/olympic-schedule.git` (codice sorgente)
+- Fonte dati: `https://www.olympics.com/en/milano-cortina-2026` (sito ufficiale)
 - Il popup si chiude con **ESC**.
 
 ## Troubleshooting

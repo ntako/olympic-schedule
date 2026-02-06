@@ -80,6 +80,34 @@ export default class OlympicRingsPreferences extends ExtensionPreferences {
 
     group.add(saveRow);
     page.add(group);
+
+    const infoGroup = new Adw.PreferencesGroup({
+      title: 'Info',
+    });
+
+    const repoRow = new Adw.ActionRow({
+      title: 'Repository',
+      subtitle: 'Codice sorgente dell’estensione.',
+    });
+    const repoButton = new Gtk.LinkButton({
+      label: 'Apri',
+      uri: 'https://github.com/sydro/olympic-schedule',
+    });
+    repoRow.add_suffix(repoButton);
+    infoGroup.add(repoRow);
+
+    const dataRow = new Adw.ActionRow({
+      title: 'Fonte dati',
+      subtitle: 'Sito ufficiale Milano Cortina 2026.',
+    });
+    const dataButton = new Gtk.LinkButton({
+      label: 'Apri',
+      uri: 'https://www.olympics.com/en/milano-cortina-2026',
+    });
+    dataRow.add_suffix(dataButton);
+    infoGroup.add(dataRow);
+
+    page.add(infoGroup);
     window.add(page);
   }
 }
