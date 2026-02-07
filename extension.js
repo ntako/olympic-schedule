@@ -221,6 +221,8 @@ export default class OlympicRingsExtension extends Extension {
     this._popupContent = null
     this._popupLoadingLabel = null
     this._dayLabel = null
+    this._cardActors = null
+    this._dayUnits = null
     this._disconnectEscHandler()
     if (this._prevKeyFocus) {
       global.stage.set_key_focus(this._prevKeyFocus)
@@ -262,6 +264,7 @@ export default class OlympicRingsExtension extends Extension {
         this._renderSchedule(data, day, noc)
         GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
           this._positionPopup()
+          this._scrollToNearest()
           return GLib.SOURCE_REMOVE
         })
       }
@@ -300,17 +303,28 @@ export default class OlympicRingsExtension extends Extension {
     }
 
     const units = Array.isArray(data?.units) ? data.units : []
-    const dayUnits = units.filter(u => (u.olympicDay || '').startsWith(day))
+    const dayUnits = units.filter(u => {
+      const d = this._dateFromStart(u.startDate)
+      if (d) return d === day
+      return (u.olympicDay || '').startsWith(day)
+    })
     dayUnits.sort((a, b) => (a.startDate || '').localeCompare(b.startDate || ''))
+    this._dayUnits = dayUnits
 
     if (dayUnits.length === 0) {
       const empty = new St.Label({ text: 'Nessun evento disponibile.' })
+      empty.set_style('color: #64748b; margin-top: 8px;')
       this._popupContent.add_child(empty)
+      this._cardActors = []
+      this._popupScroll.vscroll.adjustment.set_value(0)
       return
     }
 
+    this._cardActors = []
     for (const unit of dayUnits) {
-      this._popupContent.add_child(this._buildCard(unit, noc))
+      const card = this._buildCard(unit, noc)
+      this._cardActors.push(card)
+      this._popupContent.add_child(card)
     }
   }
 
@@ -379,6 +393,41 @@ export default class OlympicRingsExtension extends Extension {
     if (!dt) return isoDate
     const title = dt.format('%e %b, %A')
     return title.charAt(0).toUpperCase() + title.slice(1)
+  }
+
+  _dateFromStart(startDate) {
+    if (!startDate) return ''
+    const dt = GLib.DateTime.new_from_iso8601(startDate, null)
+    if (!dt) return ''
+    return dt.format('%Y-%m-%d')
+  }
+
+  _scrollToNearest() {
+    if (!this._popupScroll || !this._dayUnits || !this._cardActors || this._dayUnits.length === 0) return
+    const now = GLib.DateTime.new_now_local()
+    let targetIndex = 0
+    let minDiff = Number.POSITIVE_INFINITY
+
+    for (let i = 0; i < this._dayUnits.length; i++) {
+      const unit = this._dayUnits[i]
+      if (!unit.startDate) continue
+      const dt = GLib.DateTime.new_from_iso8601(unit.startDate, null)
+      if (!dt) continue
+      const diff = Math.abs(dt.to_unix() - now.to_unix())
+      if (diff < minDiff) {
+        minDiff = diff
+        targetIndex = i
+      }
+    }
+
+    const card = this._cardActors[targetIndex]
+    if (!card || !card.get_parent()) return
+    const box = card.get_allocation_box()
+    const adjustment = this._popupScroll.vscroll.adjustment
+    let offset = Math.max(0, Math.round(box.y1 - 8))
+    const max = Math.max(0, adjustment.upper - adjustment.page_size)
+    if (offset > max) offset = max
+    adjustment.set_value(offset)
   }
 
   _advanceDay(deltaDays) {
