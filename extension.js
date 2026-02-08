@@ -358,7 +358,26 @@ export default class OlympicRingsExtension extends Extension {
     card.add_child(topRow)
 
     const competitors = Array.isArray(unit.competitors) ? unit.competitors : []
-    if (competitors.length > 0) {
+    const winners = isPast ? this._getMedalWinners(competitors) : []
+    if (winners.length > 0) {
+      const medalBox = new St.BoxLayout({ vertical: true, style: 'margin-top: 6px;' })
+      for (const winner of winners) {
+        const row = new St.BoxLayout({ x_expand: true })
+        const dot = new St.Widget({
+          style: `background: ${winner.color}; border-radius: 6px; width: 10px; height: 10px; margin-right: 6px;`,
+        })
+        const mark = winner.mark ? `  ${winner.mark}` : ''
+        const label = new St.Label({
+          text: `${winner.noc || ''}  ${winner.name || ''}${mark}`,
+        })
+        const winnerStyle = winner.noc === noc ? 'font-size: 12px; font-weight: 700; color: #15803d;' : 'font-size: 12px; font-weight: 700;'
+        label.set_style(winnerStyle)
+        row.add_child(dot)
+        row.add_child(label)
+        medalBox.add_child(row)
+      }
+      card.add_child(medalBox)
+    } else if (competitors.length > 0) {
       const compBox = new St.BoxLayout({ vertical: true, style: 'margin-top: 6px;' })
       const max = Math.min(2, competitors.length)
       for (let i = 0; i < max; i++) {
@@ -393,6 +412,26 @@ export default class OlympicRingsExtension extends Extension {
     if (!dt) return isoDate
     const title = dt.format('%e %b, %A')
     return title.charAt(0).toUpperCase() + title.slice(1)
+  }
+
+  _getMedalWinners(competitors) {
+    const medalColors = {
+      '1': '#d4af37',
+      '2': '#c0c0c0',
+      '3': '#cd7f32',
+    }
+    const winners = competitors
+      .filter(c => c?.results?.position && medalColors[c.results.position])
+      .map(c => ({
+        position: c.results.position,
+        color: medalColors[c.results.position],
+        noc: c.noc,
+        name: c.name,
+        mark: c.results?.mark,
+      }))
+      .sort((a, b) => Number(a.position) - Number(b.position))
+
+    return winners.slice(0, 3)
   }
 
   _dateFromStart(startDate) {
