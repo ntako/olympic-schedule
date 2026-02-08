@@ -223,6 +223,11 @@ export default class OlympicRingsExtension extends Extension {
     this._dayLabel = null
     this._cardActors = null
     this._dayUnits = null
+    this._detailsUnitId = null
+    if (this._detailsPopup) {
+      this._detailsPopup.destroy()
+      this._detailsPopup = null
+    }
     this._disconnectEscHandler()
     if (this._prevKeyFocus) {
       global.stage.set_key_focus(this._prevKeyFocus)
@@ -338,6 +343,13 @@ export default class OlympicRingsExtension extends Extension {
       vertical: true,
       style: `background: ${bg}; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;`,
     })
+    card.reactive = true
+    card.can_focus = true
+    card.track_hover = true
+    card.connect('button-press-event', () => {
+      this._toggleDetails(unit)
+      return Clutter.EVENT_STOP
+    })
 
     const topRow = new St.BoxLayout({ x_expand: true })
     const timeText = this._formatStartTime(unit)
@@ -363,9 +375,9 @@ export default class OlympicRingsExtension extends Extension {
       const medalBox = new St.BoxLayout({ vertical: true, style: 'margin-top: 6px;' })
       for (const winner of winners) {
         const row = new St.BoxLayout({ x_expand: true })
-        const dot = new St.Widget({
-          style: `background: ${winner.color}; border-radius: 6px; width: 10px; height: 10px; margin-right: 6px;`,
-        })
+        row.set_style('spacing: 6px;')
+        const dot = new St.Label({ text: '●' })
+        dot.set_style(`color: ${winner.color}; font-size: 12px;`)
         const mark = winner.mark ? `  ${winner.mark}` : ''
         const label = new St.Label({
           text: `${winner.noc || ''}  ${winner.name || ''}${mark}`,
@@ -416,22 +428,34 @@ export default class OlympicRingsExtension extends Extension {
 
   _getMedalWinners(competitors) {
     const medalColors = {
-      '1': '#d4af37',
-      '2': '#c0c0c0',
-      '3': '#cd7f32',
+      ME_GOLD: '#d4af37',
+      ME_SILVER: '#c0c0c0',
+      ME_BRONZE: '#cd7f32',
     }
+    const order = { ME_GOLD: 1, ME_SILVER: 2, ME_BRONZE: 3 }
+
     const winners = competitors
-      .filter(c => c?.results?.position && medalColors[c.results.position])
+      .filter(c => c?.results?.medalType && medalColors[c.results.medalType])
       .map(c => ({
-        position: c.results.position,
-        color: medalColors[c.results.position],
+        medalType: c.results.medalType,
+        color: medalColors[c.results.medalType],
         noc: c.noc,
         name: c.name,
         mark: c.results?.mark,
+        order: order[c.results.medalType] ?? 99,
       }))
-      .sort((a, b) => Number(a.position) - Number(b.position))
+      .sort((a, b) => a.order - b.order)
 
-    return winners.slice(0, 3)
+    // Se ci sono duplicati per medalType, prendi il primo
+    const seen = new Set()
+    const unique = []
+    for (const w of winners) {
+      if (seen.has(w.medalType)) continue
+      seen.add(w.medalType)
+      unique.push(w)
+    }
+
+    return unique
   }
 
   _dateFromStart(startDate) {
@@ -467,6 +491,130 @@ export default class OlympicRingsExtension extends Extension {
     const max = Math.max(0, adjustment.upper - adjustment.page_size)
     if (offset > max) offset = max
     adjustment.set_value(offset)
+  }
+
+  _toggleDetails(unit) {
+    const noc = (this._settings.get_string('noc') || 'ITA').trim().toUpperCase()
+    if (this._detailsUnitId === unit.id && this._detailsPopup) {
+      this._detailsPopup.destroy()
+      this._detailsPopup = null
+      this._detailsUnitId = null
+      return
+    }
+    this._detailsUnitId = unit.id
+    if (this._detailsPopup) {
+      this._detailsPopup.destroy()
+      this._detailsPopup = null
+    }
+    this._detailsPopup = this._buildDetailsPopup(unit, noc)
+    Main.uiGroup.add_child(this._detailsPopup)
+    this._positionDetailsPopup()
+  }
+
+  _buildDetailsPopup(unit, noc) {
+    const box = new St.BoxLayout({
+      vertical: true,
+      reactive: true,
+      style: 'background-color: #ffffff; color: #0f172a; padding: 12px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.22);',
+    })
+
+    const title = new St.Label({ text: unit.disciplineName || 'Evento' })
+    title.set_style('font-weight: 800; font-size: 14px; margin-bottom: 4px;')
+    const subtitle = new St.Label({ text: unit.eventUnitName || unit.eventName || '' })
+    subtitle.set_style('color: #475569; font-size: 12px; margin-bottom: 8px;')
+    box.add_child(title)
+    if (subtitle.text) box.add_child(subtitle)
+
+    const infoBox = new St.BoxLayout({
+      vertical: true,
+      style: 'background: #f1f5f9; border-radius: 8px; padding: 8px; margin-top: 6px;',
+    })
+    const infoLines = [
+      ['Orario', this._formatStartTime(unit)],
+      ['Status', unit.statusDescription || unit.status || ''],
+      ['Venue', unit.venueDescription || unit.venueLongDescription || ''],
+      ['Location', unit.locationShortDescription || unit.locationDescription || ''],
+    ]
+    for (const [label, value] of infoLines) {
+      if (!value) continue
+      const line = new St.Label({ text: `${label}: ${value}` })
+      line.set_style('font-size: 11px; color: #334155;')
+      infoBox.add_child(line)
+    }
+    box.add_child(infoBox)
+
+    const competitors = Array.isArray(unit.competitors) ? unit.competitors : []
+    const winners = this._getMedalWinners(competitors)
+    if (winners.length > 0) {
+      const medalTitle = new St.Label({ text: 'Medaglie' })
+      medalTitle.set_style('font-weight: 700; margin-top: 8px; margin-bottom: 4px;')
+      box.add_child(medalTitle)
+
+      const medalBox = new St.BoxLayout({
+        vertical: true,
+        style: 'background: #f1f5f9; border-radius: 8px; padding: 8px;',
+      })
+      for (const winner of winners) {
+        const row = new St.BoxLayout({ x_expand: true })
+        row.set_style('spacing: 6px;')
+        const dot = new St.Label({ text: '●' })
+        dot.set_style(`color: ${winner.color}; font-size: 12px;`)
+        const mark = winner.mark ? `  ${winner.mark}` : ''
+        const label = new St.Label({ text: `${winner.noc || ''}  ${winner.name || ''}${mark}` })
+        const winnerStyle = winner.noc === noc ? 'font-size: 12px; font-weight: 700; color: #15803d;' : 'font-size: 12px; font-weight: 700;'
+        label.set_style(winnerStyle)
+        row.add_child(dot)
+        row.add_child(label)
+        medalBox.add_child(row)
+      }
+      box.add_child(medalBox)
+    }
+
+    const compTitle = new St.Label({ text: 'Competitors' })
+    compTitle.set_style('font-weight: 700; margin-top: 8px; margin-bottom: 4px;')
+    box.add_child(compTitle)
+
+    const compList = new St.BoxLayout({ vertical: true })
+    for (const c of competitors) {
+      const mark = c.results?.mark ? `  ${c.results.mark}` : ''
+      const line = new St.Label({ text: `${c.noc || ''}  ${c.name || ''}${mark}` })
+      const lineStyle = c.noc === noc ? 'font-size: 11px; color: #15803d; font-weight: 700;' : 'font-size: 11px;'
+      line.set_style(lineStyle)
+      compList.add_child(line)
+    }
+
+    const compScroll = new St.ScrollView({ style: 'max-height: 240px;', overlay_scrollbars: false })
+    compScroll.set_child(compList)
+    const compBox = new St.BoxLayout({
+      vertical: true,
+      style: 'background: #f1f5f9; border-radius: 8px; padding: 8px;',
+    })
+    compBox.add_child(compScroll)
+    box.add_child(compBox)
+
+    return box
+  }
+
+  _positionDetailsPopup() {
+    if (!this._detailsPopup || !this._popup) return
+    const [px, py] = this._popup.get_transformed_position()
+    const [, , pW, pH] = this._popup.get_preferred_size()
+    const [, , dW, dH] = this._detailsPopup.get_preferred_size()
+    const monitor = Main.layoutManager.primaryMonitor
+    const margin = 8
+
+    let x = Math.round(px - dW - 8)
+    let y = Math.round(py)
+
+    if (x < monitor.x + margin) {
+      x = Math.round(px + pW + 8)
+    }
+    x = Math.max(monitor.x + margin, Math.min(x, monitor.x + monitor.width - dW - margin))
+    if (y + dH > monitor.y + monitor.height - margin) {
+      y = Math.max(monitor.y + margin, monitor.y + monitor.height - dH - margin)
+    }
+
+    this._detailsPopup.set_position(x, y)
   }
 
   _advanceDay(deltaDays) {
