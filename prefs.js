@@ -5,6 +5,7 @@ import Gtk from 'gi://Gtk';
 import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 export default class OlympicRingsPreferences extends ExtensionPreferences {
+  // fillPreferencesWindow(): build the preferences UI and wire the Save action.
   fillPreferencesWindow(window) {
     const settings = this.getSettings();
 

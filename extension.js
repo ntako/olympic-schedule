@@ -9,8 +9,11 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js'
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js'
 
 export default class OlympicRingsExtension extends Extension {
+  // enable(): create the topbar button, menu, and wire all signal handlers.
   enable() {
     this._settings = this.getSettings()
+    this._panelActor = Main.panel.actor ?? Main.panel
+    this._logger = this.getLogger ? this.getLogger() : null
     this._keyPressId = 0
     this._prevKeyFocus = null
 
@@ -70,15 +73,17 @@ export default class OlympicRingsExtension extends Extension {
     Main.panel._rightBox.insert_child_at_index(this._button, 0)
 
     this._updateIcon()
-    this._themeChangedId = Main.panel.actor.connect('style-changed', () => {
+    this._themeChangedId = this._panelActor.connect('style-changed', () => {
       this._updateIcon()
     })
   }
 
+  // disable(): disconnect signals and destroy all UI elements created by the extension.
   disable() {
     this._hidePopup()
 
     this._settings = null
+    this._logger = null
 
     if (this._buttonPressId) {
       this._button.disconnect(this._buttonPressId)
@@ -90,7 +95,7 @@ export default class OlympicRingsExtension extends Extension {
     }
 
     if (this._themeChangedId) {
-      Main.panel.actor.disconnect(this._themeChangedId)
+      this._panelActor.disconnect(this._themeChangedId)
       this._themeChangedId = null
     }
 
@@ -107,8 +112,9 @@ export default class OlympicRingsExtension extends Extension {
     this._icon = null
   }
 
+  // _updateIcon(): choose the correct rings variant based on topbar background contrast.
   _updateIcon() {
-    const bg = Main.panel.actor.get_theme_node().get_background_color()
+    const bg = this._panelActor.get_theme_node().get_background_color()
     const luminance = (0.2126 * bg.red + 0.7152 * bg.green + 0.0722 * bg.blue) / 255
     const ringVariant = luminance < 0.5 ? 'olympic-rings-white.svg' : 'olympic-rings.svg'
     const iconPath = `${this.path}/icons/${ringVariant}`
@@ -116,6 +122,7 @@ export default class OlympicRingsExtension extends Extension {
     this._icon.gicon = gicon
   }
 
+  // _togglePopup(): open/close the main schedule popup.
   _togglePopup() {
     if (this._popup) {
       this._hidePopup()
@@ -154,6 +161,7 @@ export default class OlympicRingsExtension extends Extension {
     })
     prevButton.set_child(prevIcon)
     prevButton.connect('button-press-event', () => {
+      this._closeDetails()
       this._advanceDay(-1)
       return Clutter.EVENT_STOP
     })
@@ -170,6 +178,7 @@ export default class OlympicRingsExtension extends Extension {
     const nextIcon = new St.Icon({ icon_name: 'go-next-symbolic', style_class: 'system-status-icon', icon_size: 16 })
     nextButton.set_child(nextIcon)
     nextButton.connect('button-press-event', () => {
+      this._closeDetails()
       this._advanceDay(1)
       return Clutter.EVENT_STOP
     })
@@ -192,6 +201,9 @@ export default class OlympicRingsExtension extends Extension {
       style: 'max-height: 520px;',
       overlay_scrollbars: false,
     })
+    this._scrollAdjustId = this._popupScroll.vscroll.adjustment.connect('notify::value', () => {
+      this._closeDetails()
+    })
     this._popupScroll.set_child(this._popupContent)
     this._popup.add_child(headerBox)
     this._popup.add_child(dayRow)
@@ -208,7 +220,9 @@ export default class OlympicRingsExtension extends Extension {
     global.stage.set_key_focus(this._popup)
   }
 
+  // _hidePopup(): teardown the main popup and related state.
   _hidePopup() {
+    this._closeDetails()
     if (this._popupTimeoutId) {
       GLib.source_remove(this._popupTimeoutId)
       this._popupTimeoutId = null
@@ -216,6 +230,10 @@ export default class OlympicRingsExtension extends Extension {
     if (this._popup) {
       this._popup.destroy()
       this._popup = null
+    }
+    if (this._scrollAdjustId && this._popupScroll) {
+      this._popupScroll.vscroll.adjustment.disconnect(this._scrollAdjustId)
+      this._scrollAdjustId = 0
     }
     this._popupScroll = null
     this._popupContent = null
@@ -235,6 +253,7 @@ export default class OlympicRingsExtension extends Extension {
     }
   }
 
+  // _positionPopup(): clamp the main popup within the current monitor bounds.
   _positionPopup() {
     if (!this._popup || !this._button) return
     const [bx, by] = this._button.get_transformed_position()
@@ -256,12 +275,17 @@ export default class OlympicRingsExtension extends Extension {
     this._popup.set_position(x, y)
   }
 
+  // _loadSchedule(): fetch schedule data for current NOC/day and render it.
   async _loadSchedule() {
     try {
       const noc = (this._settings.get_string('noc') || 'ITA').trim().toUpperCase()
       const day = this._currentDay || this._getTodayIsoDate()
       const url = `https://www.olympics.com/wmr-owg2026/schedules/api/${noc}/schedule/lite/day/${day}`
-      log(`[olympic-schedule] refresh ${url}`)
+      if (this._logger) {
+        this._logger.log(`refresh ${url}`)
+      } else {
+        log(`[olympic-schedule] refresh ${url}`)
+      }
 
       const jsonText = await this._fetchJson(url)
       const data = JSON.parse(jsonText)
@@ -280,27 +304,13 @@ export default class OlympicRingsExtension extends Extension {
     }
   }
 
+  // _getTodayIsoDate(): return local date in YYYY-MM-DD format.
   _getTodayIsoDate() {
     const now = GLib.DateTime.new_now_local()
     return now.format('%Y-%m-%d')
   }
 
-  _truncateJson(text, maxLen) {
-    try {
-      const parsed = JSON.parse(text)
-      const pretty = JSON.stringify(parsed, null, 2)
-      if (pretty.length <= maxLen) {
-        return pretty
-      }
-      return `${pretty.slice(0, maxLen)}\n...`
-    } catch {
-      if (text.length <= maxLen) {
-        return text
-      }
-      return `${text.slice(0, maxLen)}\n...`
-    }
-  }
-
+  // _renderSchedule(): build the list of event cards for the given day.
   _renderSchedule(data, day, noc) {
     this._popupContent.destroy_all_children()
     if (this._dayLabel) {
@@ -333,6 +343,7 @@ export default class OlympicRingsExtension extends Extension {
     }
   }
 
+  // _buildCard(): render a single event card with medals or competitors summary.
   _buildCard(unit, noc) {
     const status = (unit.status || '').toUpperCase()
     const isLive = unit.liveFlag || status === 'IN_PROGRESS' || status === 'LIVE' || status === 'ACTIVE'
@@ -382,7 +393,10 @@ export default class OlympicRingsExtension extends Extension {
         const label = new St.Label({
           text: `${winner.noc || ''}  ${winner.name || ''}${mark}`,
         })
-        const winnerStyle = winner.noc === noc ? 'font-size: 12px; font-weight: 700; color: #15803d;' : 'font-size: 12px; font-weight: 700;'
+        const winnerStyle =
+          winner.noc === noc
+            ? 'font-size: 12px; font-weight: 700; color: #15803d;'
+            : 'font-size: 12px; font-weight: 700;'
         label.set_style(winnerStyle)
         row.add_child(dot)
         row.add_child(label)
@@ -407,6 +421,7 @@ export default class OlympicRingsExtension extends Extension {
     return card
   }
 
+  // _formatStartTime(): format event start time or fallback label.
   _formatStartTime(unit) {
     if (unit.hideStartDate && unit.startText) {
       return unit.startText
@@ -419,6 +434,7 @@ export default class OlympicRingsExtension extends Extension {
     return dt.format('%H:%M')
   }
 
+  // _formatDayTitle(): format a human-readable day title.
   _formatDayTitle(isoDate) {
     const dt = GLib.DateTime.new_from_iso8601(`${isoDate}T00:00:00`, null)
     if (!dt) return isoDate
@@ -426,6 +442,7 @@ export default class OlympicRingsExtension extends Extension {
     return title.charAt(0).toUpperCase() + title.slice(1)
   }
 
+  // _getMedalWinners(): extract medal winners using medalType (gold/silver/bronze).
   _getMedalWinners(competitors) {
     const medalColors = {
       ME_GOLD: '#d4af37',
@@ -458,6 +475,7 @@ export default class OlympicRingsExtension extends Extension {
     return unique
   }
 
+  // _dateFromStart(): extract YYYY-MM-DD from an ISO datetime.
   _dateFromStart(startDate) {
     if (!startDate) return ''
     const dt = GLib.DateTime.new_from_iso8601(startDate, null)
@@ -465,6 +483,7 @@ export default class OlympicRingsExtension extends Extension {
     return dt.format('%Y-%m-%d')
   }
 
+  // _scrollToNearest(): scroll list to the event closest to the current time.
   _scrollToNearest() {
     if (!this._popupScroll || !this._dayUnits || !this._cardActors || this._dayUnits.length === 0) return
     const now = GLib.DateTime.new_now_local()
@@ -493,29 +512,38 @@ export default class OlympicRingsExtension extends Extension {
     adjustment.set_value(offset)
   }
 
+  // _closeDetails(): close the details popup if open.
+  _closeDetails() {
+    if (this._detailsPopup) {
+      this._detailsPopup.destroy()
+      this._detailsPopup = null
+    }
+    this._detailsUnitId = null
+  }
+
+  // _toggleDetails(): open/close the event details popup for a card.
   _toggleDetails(unit) {
     const noc = (this._settings.get_string('noc') || 'ITA').trim().toUpperCase()
     if (this._detailsUnitId === unit.id && this._detailsPopup) {
-      this._detailsPopup.destroy()
-      this._detailsPopup = null
-      this._detailsUnitId = null
+      this._closeDetails()
       return
     }
     this._detailsUnitId = unit.id
     if (this._detailsPopup) {
-      this._detailsPopup.destroy()
-      this._detailsPopup = null
+      this._closeDetails()
     }
     this._detailsPopup = this._buildDetailsPopup(unit, noc)
     Main.uiGroup.add_child(this._detailsPopup)
     this._positionDetailsPopup()
   }
 
+  // _buildDetailsPopup(): build the left-side details popup for an event.
   _buildDetailsPopup(unit, noc) {
     const box = new St.BoxLayout({
       vertical: true,
       reactive: true,
-      style: 'background-color: #ffffff; color: #0f172a; padding: 12px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.22);',
+      style:
+        'background-color: #ffffff; color: #0f172a; padding: 12px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.22);',
     })
 
     const title = new St.Label({ text: unit.disciplineName || 'Evento' })
@@ -561,7 +589,10 @@ export default class OlympicRingsExtension extends Extension {
         dot.set_style(`color: ${winner.color}; font-size: 12px;`)
         const mark = winner.mark ? `  ${winner.mark}` : ''
         const label = new St.Label({ text: `${winner.noc || ''}  ${winner.name || ''}${mark}` })
-        const winnerStyle = winner.noc === noc ? 'font-size: 12px; font-weight: 700; color: #15803d;' : 'font-size: 12px; font-weight: 700;'
+        const winnerStyle =
+          winner.noc === noc
+            ? 'font-size: 12px; font-weight: 700; color: #15803d;'
+            : 'font-size: 12px; font-weight: 700;'
         label.set_style(winnerStyle)
         row.add_child(dot)
         row.add_child(label)
@@ -595,6 +626,7 @@ export default class OlympicRingsExtension extends Extension {
     return box
   }
 
+  // _positionDetailsPopup(): position the details popup near the main popup.
   _positionDetailsPopup() {
     if (!this._detailsPopup || !this._popup) return
     const [px, py] = this._popup.get_transformed_position()
@@ -617,6 +649,7 @@ export default class OlympicRingsExtension extends Extension {
     this._detailsPopup.set_position(x, y)
   }
 
+  // _advanceDay(): move current day forward/backward and refresh data.
   _advanceDay(deltaDays) {
     const base = this._currentDay || this._getTodayIsoDate()
     const dt = GLib.DateTime.new_from_iso8601(`${base}T00:00:00Z`, null)
@@ -636,6 +669,7 @@ export default class OlympicRingsExtension extends Extension {
     })
   }
 
+  // _fetchJson(): HTTP GET and return response text for a URL.
   _fetchJson(url) {
     const session = new Soup.Session()
     const message = Soup.Message.new('GET', url)
@@ -663,6 +697,7 @@ export default class OlympicRingsExtension extends Extension {
     })
   }
 
+  // _ensureEscHandler(): close popups when ESC is pressed.
   _ensureEscHandler() {
     if (this._keyPressId) return
     this._keyPressId = global.stage.connect('key-press-event', (actor, event) => {
@@ -675,6 +710,7 @@ export default class OlympicRingsExtension extends Extension {
     })
   }
 
+  // _disconnectEscHandler(): remove ESC handler when popups are closed.
   _disconnectEscHandler() {
     if (this._keyPressId) {
       global.stage.disconnect(this._keyPressId)
