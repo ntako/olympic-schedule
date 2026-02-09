@@ -161,6 +161,7 @@ export default class OlympicRingsExtension extends Extension {
     })
     prevButton.set_child(prevIcon)
     prevButton.connect('button-press-event', () => {
+      this._closeDetails()
       this._advanceDay(-1)
       return Clutter.EVENT_STOP
     })
@@ -177,6 +178,7 @@ export default class OlympicRingsExtension extends Extension {
     const nextIcon = new St.Icon({ icon_name: 'go-next-symbolic', style_class: 'system-status-icon', icon_size: 16 })
     nextButton.set_child(nextIcon)
     nextButton.connect('button-press-event', () => {
+      this._closeDetails()
       this._advanceDay(1)
       return Clutter.EVENT_STOP
     })
@@ -199,6 +201,9 @@ export default class OlympicRingsExtension extends Extension {
       style: 'max-height: 520px;',
       overlay_scrollbars: false,
     })
+    this._scrollAdjustId = this._popupScroll.vscroll.adjustment.connect('notify::value', () => {
+      this._closeDetails()
+    })
     this._popupScroll.set_child(this._popupContent)
     this._popup.add_child(headerBox)
     this._popup.add_child(dayRow)
@@ -217,6 +222,7 @@ export default class OlympicRingsExtension extends Extension {
 
   // _hidePopup(): teardown the main popup and related state.
   _hidePopup() {
+    this._closeDetails()
     if (this._popupTimeoutId) {
       GLib.source_remove(this._popupTimeoutId)
       this._popupTimeoutId = null
@@ -224,6 +230,10 @@ export default class OlympicRingsExtension extends Extension {
     if (this._popup) {
       this._popup.destroy()
       this._popup = null
+    }
+    if (this._scrollAdjustId && this._popupScroll) {
+      this._popupScroll.vscroll.adjustment.disconnect(this._scrollAdjustId)
+      this._scrollAdjustId = 0
     }
     this._popupScroll = null
     this._popupContent = null
@@ -502,19 +512,25 @@ export default class OlympicRingsExtension extends Extension {
     adjustment.set_value(offset)
   }
 
+  // _closeDetails(): close the details popup if open.
+  _closeDetails() {
+    if (this._detailsPopup) {
+      this._detailsPopup.destroy()
+      this._detailsPopup = null
+    }
+    this._detailsUnitId = null
+  }
+
   // _toggleDetails(): open/close the event details popup for a card.
   _toggleDetails(unit) {
     const noc = (this._settings.get_string('noc') || 'ITA').trim().toUpperCase()
     if (this._detailsUnitId === unit.id && this._detailsPopup) {
-      this._detailsPopup.destroy()
-      this._detailsPopup = null
-      this._detailsUnitId = null
+      this._closeDetails()
       return
     }
     this._detailsUnitId = unit.id
     if (this._detailsPopup) {
-      this._detailsPopup.destroy()
-      this._detailsPopup = null
+      this._closeDetails()
     }
     this._detailsPopup = this._buildDetailsPopup(unit, noc)
     Main.uiGroup.add_child(this._detailsPopup)
