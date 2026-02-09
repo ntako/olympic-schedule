@@ -12,6 +12,8 @@ export default class OlympicRingsExtension extends Extension {
   // enable(): create the topbar button, menu, and wire all signal handlers.
   enable() {
     this._settings = this.getSettings()
+    this._panelActor = Main.panel.actor ?? Main.panel
+    this._logger = this.getLogger ? this.getLogger() : null
     this._keyPressId = 0
     this._prevKeyFocus = null
 
@@ -71,7 +73,7 @@ export default class OlympicRingsExtension extends Extension {
     Main.panel._rightBox.insert_child_at_index(this._button, 0)
 
     this._updateIcon()
-    this._themeChangedId = Main.panel.actor.connect('style-changed', () => {
+    this._themeChangedId = this._panelActor.connect('style-changed', () => {
       this._updateIcon()
     })
   }
@@ -81,6 +83,7 @@ export default class OlympicRingsExtension extends Extension {
     this._hidePopup()
 
     this._settings = null
+    this._logger = null
 
     if (this._buttonPressId) {
       this._button.disconnect(this._buttonPressId)
@@ -92,7 +95,7 @@ export default class OlympicRingsExtension extends Extension {
     }
 
     if (this._themeChangedId) {
-      Main.panel.actor.disconnect(this._themeChangedId)
+      this._panelActor.disconnect(this._themeChangedId)
       this._themeChangedId = null
     }
 
@@ -111,7 +114,7 @@ export default class OlympicRingsExtension extends Extension {
 
   // _updateIcon(): choose the correct rings variant based on topbar background contrast.
   _updateIcon() {
-    const bg = Main.panel.actor.get_theme_node().get_background_color()
+    const bg = this._panelActor.get_theme_node().get_background_color()
     const luminance = (0.2126 * bg.red + 0.7152 * bg.green + 0.0722 * bg.blue) / 255
     const ringVariant = luminance < 0.5 ? 'olympic-rings-white.svg' : 'olympic-rings.svg'
     const iconPath = `${this.path}/icons/${ringVariant}`
@@ -268,7 +271,11 @@ export default class OlympicRingsExtension extends Extension {
       const noc = (this._settings.get_string('noc') || 'ITA').trim().toUpperCase()
       const day = this._currentDay || this._getTodayIsoDate()
       const url = `https://www.olympics.com/wmr-owg2026/schedules/api/${noc}/schedule/lite/day/${day}`
-      log(`[olympic-schedule] refresh ${url}`)
+      if (this._logger) {
+        this._logger.log(`refresh ${url}`)
+      } else {
+        log(`[olympic-schedule] refresh ${url}`)
+      }
 
       const jsonText = await this._fetchJson(url)
       const data = JSON.parse(jsonText)
@@ -376,7 +383,10 @@ export default class OlympicRingsExtension extends Extension {
         const label = new St.Label({
           text: `${winner.noc || ''}  ${winner.name || ''}${mark}`,
         })
-        const winnerStyle = winner.noc === noc ? 'font-size: 12px; font-weight: 700; color: #15803d;' : 'font-size: 12px; font-weight: 700;'
+        const winnerStyle =
+          winner.noc === noc
+            ? 'font-size: 12px; font-weight: 700; color: #15803d;'
+            : 'font-size: 12px; font-weight: 700;'
         label.set_style(winnerStyle)
         row.add_child(dot)
         row.add_child(label)
@@ -516,7 +526,8 @@ export default class OlympicRingsExtension extends Extension {
     const box = new St.BoxLayout({
       vertical: true,
       reactive: true,
-      style: 'background-color: #ffffff; color: #0f172a; padding: 12px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.22);',
+      style:
+        'background-color: #ffffff; color: #0f172a; padding: 12px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.22);',
     })
 
     const title = new St.Label({ text: unit.disciplineName || 'Evento' })
@@ -562,7 +573,10 @@ export default class OlympicRingsExtension extends Extension {
         dot.set_style(`color: ${winner.color}; font-size: 12px;`)
         const mark = winner.mark ? `  ${winner.mark}` : ''
         const label = new St.Label({ text: `${winner.noc || ''}  ${winner.name || ''}${mark}` })
-        const winnerStyle = winner.noc === noc ? 'font-size: 12px; font-weight: 700; color: #15803d;' : 'font-size: 12px; font-weight: 700;'
+        const winnerStyle =
+          winner.noc === noc
+            ? 'font-size: 12px; font-weight: 700; color: #15803d;'
+            : 'font-size: 12px; font-weight: 700;'
         label.set_style(winnerStyle)
         row.add_child(dot)
         row.add_child(label)
