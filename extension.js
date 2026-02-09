@@ -10,6 +10,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js'
 
 export default class OlympicRingsExtension extends Extension {
   enable() {
+    this._panelActor = Main.panel.actor ?? Main.panel
     this._settings = this.getSettings()
     this._keyPressId = 0
     this._prevKeyFocus = null
@@ -70,7 +71,7 @@ export default class OlympicRingsExtension extends Extension {
     Main.panel._rightBox.insert_child_at_index(this._button, 0)
 
     this._updateIcon()
-    this._themeChangedId = Main.panel.actor.connect('style-changed', () => {
+    this._themeChangedId = this._panelActor.connect('style-changed', () => {
       this._updateIcon()
     })
   }
@@ -90,7 +91,7 @@ export default class OlympicRingsExtension extends Extension {
     }
 
     if (this._themeChangedId) {
-      Main.panel.actor.disconnect(this._themeChangedId)
+      this._panelActor.disconnect(this._themeChangedId)
       this._themeChangedId = null
     }
 
@@ -108,7 +109,7 @@ export default class OlympicRingsExtension extends Extension {
   }
 
   _updateIcon() {
-    const bg = Main.panel.actor.get_theme_node().get_background_color()
+    const bg = this._panelActor.get_theme_node().get_background_color()
     const luminance = (0.2126 * bg.red + 0.7152 * bg.green + 0.0722 * bg.blue) / 255
     const ringVariant = luminance < 0.5 ? 'olympic-rings-white.svg' : 'olympic-rings.svg'
     const iconPath = `${this.path}/icons/${ringVariant}`
