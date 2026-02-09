@@ -3,6 +3,6 @@
   "name": "Olympic Rings Topbar",
   "description": "Mostra un'icona con 5 cerchi in topbar.",
   "settings-schema": "org.gnome.shell.extensions.olympic-schedule",
-  "shell-version": ["45", "46", "47","48","49"],
-  "version": 2
+  "shell-version": ["45", "46", "47", "48", "49"],
+  "version": 3
 }
