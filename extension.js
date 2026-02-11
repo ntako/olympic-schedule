@@ -202,9 +202,12 @@ export default class OlympicRingsExtension extends Extension {
       style: 'max-height: 520px;',
       overlay_scrollbars: false,
     })
-    this._scrollAdjustId = this._popupScroll.vscroll.adjustment.connect('notify::value', () => {
-      this._closeDetails()
-    })
+    const vAdjustment = this._popupScroll.vadjustment || this._popupScroll.vscroll?.adjustment
+    if (vAdjustment) {
+      this._scrollAdjustId = vAdjustment.connect('notify::value', () => {
+        this._closeDetails()
+      })
+    }
     this._popupScroll.set_child(this._popupContent)
     this._popup.add_child(headerBox)
     this._popup.add_child(dayRow)
@@ -233,7 +236,10 @@ export default class OlympicRingsExtension extends Extension {
       this._popup = null
     }
     if (this._scrollAdjustId && this._popupScroll) {
-      this._popupScroll.vscroll.adjustment.disconnect(this._scrollAdjustId)
+      const vAdjustment = this._popupScroll.vadjustment || this._popupScroll.vscroll?.adjustment
+      if (vAdjustment) {
+        vAdjustment.disconnect(this._scrollAdjustId)
+      }
       this._scrollAdjustId = 0
     }
     this._popupScroll = null
@@ -332,7 +338,10 @@ export default class OlympicRingsExtension extends Extension {
       empty.set_style('color: #64748b; margin-top: 8px;')
       this._popupContent.add_child(empty)
       this._cardActors = []
-      this._popupScroll.vscroll.adjustment.set_value(0)
+      const vAdjustment = this._popupScroll.vadjustment || this._popupScroll.vscroll?.adjustment
+      if (vAdjustment) {
+        vAdjustment.set_value(0)
+      }
       return
     }
 
@@ -506,7 +515,8 @@ export default class OlympicRingsExtension extends Extension {
     const card = this._cardActors[targetIndex]
     if (!card || !card.get_parent()) return
     const box = card.get_allocation_box()
-    const adjustment = this._popupScroll.vscroll.adjustment
+    const adjustment = this._popupScroll.vadjustment || this._popupScroll.vscroll?.adjustment
+    if (!adjustment) return
     let offset = Math.max(0, Math.round(box.y1 - 8))
     const max = Math.max(0, adjustment.upper - adjustment.page_size)
     if (offset > max) offset = max
